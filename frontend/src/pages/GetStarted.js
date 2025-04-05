@@ -7,7 +7,7 @@ function GetStarted() {
     study_interval: 'high_mental',
     time_of_day: 'morning',
     deadline_pressure: 'low',
-    personal_preferences: [],
+    personal_preferences: '',
     screen_usage: false,
     activity_level: 'sedentary',
     energy_level: 5,
@@ -22,16 +22,6 @@ function GetStarted() {
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
-    }));
-  };
-
-  const handlePreferenceChange = (e) => {
-    const { value, checked } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      personal_preferences: checked
-        ? [...prev.personal_preferences, value]
-        : prev.personal_preferences.filter(pref => pref !== value)
     }));
   };
 
@@ -106,45 +96,39 @@ function GetStarted() {
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
             >
-              <option value="low">Low (Plenty of Time)</option>
-              <option value="high">High (Deadline Soon)</option>
+              <option value="low">Low (No immediate deadlines)</option>
+              <option value="high">High (Urgent deadlines)</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Personal Preferences</label>
-            <div className="mt-2 space-y-2">
-              {['music', 'sports', 'reading', 'meditation', 'walking', 'napping'].map((pref) => (
-                <label key={pref} className="inline-flex items-center">
-                  <input
-                    type="checkbox"
-                    value={pref}
-                    checked={formData.personal_preferences.includes(pref)}
-                    onChange={handlePreferenceChange}
-                    className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">{pref.charAt(0).toUpperCase() + pref.slice(1)}</span>
-                </label>
-              ))}
-            </div>
+            <label className="block text-sm font-medium text-gray-700">
+              Personal Preferences (comma-separated)
+            </label>
+            <input
+              type="text"
+              name="personal_preferences"
+              value={formData.personal_preferences}
+              onChange={handleChange}
+              placeholder="e.g., reading, music, walking, meditation"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            />
+            <p className="mt-1 text-sm text-gray-500">
+              Enter activities you enjoy, separated by commas
+            </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Were you using screens?
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              name="screen_usage"
+              checked={formData.screen_usage}
+              onChange={handleChange}
+              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+            />
+            <label className="ml-2 block text-sm text-gray-700">
+              I have been using screens
             </label>
-            <div className="mt-2">
-              <label className="inline-flex items-center">
-                <input
-                  type="checkbox"
-                  name="screen_usage"
-                  checked={formData.screen_usage}
-                  onChange={handleChange}
-                  className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">Yes</span>
-              </label>
-            </div>
           </div>
 
           <div>
@@ -155,7 +139,7 @@ function GetStarted() {
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
             >
-              <option value="sedentary">Sedentary (Sitting for long periods)</option>
+              <option value="sedentary">Sedentary (Mostly sitting)</option>
               <option value="active">Active (Moving around)</option>
             </select>
           </div>
@@ -173,7 +157,10 @@ function GetStarted() {
               onChange={handleChange}
               className="mt-1 block w-full"
             />
-            <div className="text-sm text-gray-500">{formData.energy_level}</div>
+            <div className="flex justify-between text-xs text-gray-500">
+              <span>Low Energy</span>
+              <span>High Energy</span>
+            </div>
           </div>
 
           <div>
@@ -183,64 +170,48 @@ function GetStarted() {
             <input
               type="number"
               name="preferred_break_duration"
+              min="5"
+              max="60"
               value={formData.preferred_break_duration}
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-              required
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-          >
-            {loading ? 'Getting Recommendation...' : 'Get Recommendation'}
-          </button>
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              {loading ? 'Getting Recommendation...' : 'Get Recommendation'}
+            </button>
+          </div>
         </form>
       ) : (
-        <div className="bg-white p-6 rounded-lg shadow-lg">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-4">Your Study & Break Recommendation</h2>
+        <div className="bg-white shadow rounded-lg p-6">
+          <h2 className="text-2xl font-bold mb-4">Your Recommendation</h2>
           <div className="space-y-4">
+            <p><strong>Study Interval:</strong> {recommendation.study_interval}</p>
+            <p><strong>Break Activity:</strong> {recommendation.break_activity}</p>
+            <p><strong>Duration:</strong> {recommendation.duration} minutes</p>
             <div>
-              <h3 className="text-lg font-medium text-gray-900">Recommended Study Interval</h3>
-              <p className="text-gray-600">{recommendation.study_interval}</p>
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">Break Activity</h3>
-              <p className="text-gray-600">{recommendation.break_activity}</p>
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">Duration</h3>
-              <p className="text-gray-600">{recommendation.duration} minutes</p>
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">Description</h3>
-              <p className="text-gray-600">{recommendation.description}</p>
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">Benefits</h3>
-              <ul className="list-disc list-inside text-gray-600">
+              <strong>Benefits:</strong>
+              <ul className="list-disc list-inside mt-2">
                 {recommendation.benefits.map((benefit, index) => (
                   <li key={index}>{benefit}</li>
                 ))}
               </ul>
             </div>
             <div>
-              <h3 className="text-lg font-medium text-gray-900">Study Tips</h3>
-              <ul className="list-disc list-inside text-gray-600">
+              <strong>Study Tips:</strong>
+              <ul className="list-disc list-inside mt-2">
                 {recommendation.study_tips.map((tip, index) => (
                   <li key={index}>{tip}</li>
                 ))}
               </ul>
             </div>
           </div>
-          <button
-            onClick={() => setRecommendation(null)}
-            className="mt-6 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-          >
-            Get Another Recommendation
-          </button>
         </div>
       )}
     </div>

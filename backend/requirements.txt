@@ -1,7 +1,23 @@
+# FastAPI - Modern, fast web framework for building APIs with Python
 fastapi==0.104.1
+
+# Uvicorn - ASGI server for running FastAPI applications
 uvicorn==0.24.0
+
+# OpenAI - Python client for the OpenAI API
 openai==1.3.0
+
+# Python-dotenv - Loads environment variables from .env files
 python-dotenv==1.0.0
+
+# Pydantic - Data validation and settings management using Python type annotations
 pydantic==2.4.2
+
+# Motor - Asynchronous Python driver for MongoDB
 motor==3.1.1
+
+# PyMongo - Python driver for MongoDB
 pymongo==4.3.3
+
+# HTTPX - Required by OpenAI client
+httpx==0.25.0
