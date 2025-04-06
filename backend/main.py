@@ -1,13 +1,19 @@
 # Import necessary libraries
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 import os
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 import logging
+import sys
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +44,14 @@ openai_client = OpenAI(
     max_retries=3
 )
 
+# Security configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
 # Define the data model for user profile using Pydantic
 # This ensures data validation and type checking
 class UserProfile(BaseModel):
@@ -60,25 +74,144 @@ class BreakRecommendation(BaseModel):
     benefits: List[str]  # What benefits they'll get from this break
     study_tips: List[str]  # Tips for effective studying
 
+# New models for authentication
+class User(BaseModel):
+    username: str
+    email: EmailStr
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = None
+
+class UserInDB(User):
+    hashed_password: str
+
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class StudySession(BaseModel):
+    user_id: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    study_interval: str
+    break_activity: str
+    duration: int
+    completed: bool = False
+    notes: Optional[str] = None
+
+class BreakSession(BaseModel):
+    user_id: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    activity: str
+    duration: int
+    completed: bool = False
+    energy_level_before: int
+    energy_level_after: Optional[int] = None
+
+# Helper functions for authentication
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+    user = await db.users.find_one({"username": token_data.username})
+    if user is None:
+        raise credentials_exception
+    return UserInDB(**user)
+
 # Root endpoint - just a welcome message
 @app.get("/")
 async def root():
     return {"message": "Welcome to BreakBetter API"}
 
-# Endpoint to create or update a user profile
+# New endpoints for authentication
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = await db.users.find_one({"username": form_data.username})
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/register", response_model=User)
+async def register_user(user: UserCreate):
+    # Check if username already exists
+    if await db.users.find_one({"username": user.username}):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+    
+    # Create new user
+    hashed_password = get_password_hash(user.password)
+    user_dict = user.dict()
+    user_dict["hashed_password"] = hashed_password
+    del user_dict["password"]
+    
+    await db.users.insert_one(user_dict)
+    return User(**user_dict)
+
+# Update existing endpoints to require authentication
 @app.post("/api/profile", response_model=UserProfile)
-async def create_profile(profile: UserProfile):
+async def create_profile(
+    profile: UserProfile,
+    current_user: User = Depends(get_current_user)
+):
     try:
-        # Store the profile in MongoDB
-        await db.profiles.insert_one(profile.dict())
+        profile_dict = profile.dict()
+        profile_dict["user_id"] = current_user.username
+        await db.profiles.insert_one(profile_dict)
         return profile
     except Exception as e:
         logger.error(f"Error creating profile: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating profile: {str(e)}")
 
-# Endpoint to get personalized recommendations
 @app.post("/api/recommend", response_model=BreakRecommendation)
-async def get_recommendation(profile: UserProfile):
+async def get_recommendation(
+    profile: UserProfile,
+    current_user: User = Depends(get_current_user)
+):
     try:
         logger.info(f"Received recommendation request for user: {profile.name}")
         
@@ -176,6 +309,170 @@ def determine_study_interval(profile: UserProfile) -> str:
     except Exception as e:
         logger.error(f"Error determining study interval: {str(e)}")
         return "25 minutes"  # Default fallback
+
+# New endpoint to get user's recommendation history
+@app.get("/api/history")
+async def get_recommendation_history(
+    current_user: User = Depends(get_current_user),
+    limit: int = 10
+):
+    try:
+        history = await db.recommendations.find(
+            {"user_id": current_user.username}
+        ).sort("timestamp", -1).limit(limit).to_list(length=limit)
+        return history
+    except Exception as e:
+        logger.error(f"Error getting history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting history: {str(e)}")
+
+@app.post("/api/sessions/start")
+async def start_study_session(
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        session = StudySession(
+            user_id=current_user.username,
+            start_time=datetime.utcnow(),
+            study_interval="25 minutes",  # Default, will be updated with recommendation
+            break_activity="",  # Will be updated with recommendation
+            duration=25,  # Default, will be updated with recommendation
+            completed=False
+        )
+        await db.study_sessions.insert_one(session.dict())
+        return {"message": "Study session started", "session_id": str(session.id)}
+    except Exception as e:
+        logger.error(f"Error starting study session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error starting study session: {str(e)}")
+
+@app.post("/api/sessions/{session_id}/end")
+async def end_study_session(
+    session_id: str,
+    notes: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        session = await db.study_sessions.find_one({"_id": session_id, "user_id": current_user.username})
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        update_data = {
+            "end_time": datetime.utcnow(),
+            "completed": True,
+            "notes": notes
+        }
+        await db.study_sessions.update_one(
+            {"_id": session_id},
+            {"$set": update_data}
+        )
+        return {"message": "Study session ended"}
+    except Exception as e:
+        logger.error(f"Error ending study session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error ending study session: {str(e)}")
+
+@app.post("/api/breaks/start")
+async def start_break_session(
+    energy_level: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        break_session = BreakSession(
+            user_id=current_user.username,
+            start_time=datetime.utcnow(),
+            activity="",  # Will be updated with recommendation
+            duration=5,  # Default, will be updated with recommendation
+            completed=False,
+            energy_level_before=energy_level
+        )
+        await db.break_sessions.insert_one(break_session.dict())
+        return {"message": "Break session started", "break_id": str(break_session.id)}
+    except Exception as e:
+        logger.error(f"Error starting break session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error starting break session: {str(e)}")
+
+@app.post("/api/breaks/{break_id}/end")
+async def end_break_session(
+    break_id: str,
+    energy_level: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        break_session = await db.break_sessions.find_one({"_id": break_id, "user_id": current_user.username})
+        if not break_session:
+            raise HTTPException(status_code=404, detail="Break session not found")
+        
+        update_data = {
+            "end_time": datetime.utcnow(),
+            "completed": True,
+            "energy_level_after": energy_level
+        }
+        await db.break_sessions.update_one(
+            {"_id": break_id},
+            {"$set": update_data}
+        )
+        return {"message": "Break session ended"}
+    except Exception as e:
+        logger.error(f"Error ending break session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error ending break session: {str(e)}")
+
+@app.get("/api/stats")
+async def get_user_stats(
+    current_user: User = Depends(get_current_user),
+    days: int = 7
+):
+    try:
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Get study sessions
+        study_sessions = await db.study_sessions.find({
+            "user_id": current_user.username,
+            "start_time": {"$gte": start_date},
+            "completed": True
+        }).to_list(length=None)
+        
+        # Get break sessions
+        break_sessions = await db.break_sessions.find({
+            "user_id": current_user.username,
+            "start_time": {"$gte": start_date},
+            "completed": True
+        }).to_list(length=None)
+        
+        # Calculate statistics
+        total_study_time = sum(
+            (session["end_time"] - session["start_time"]).total_seconds() / 60
+            for session in study_sessions
+        )
+        
+        total_break_time = sum(
+            (session["end_time"] - session["start_time"]).total_seconds() / 60
+            for session in break_sessions
+        )
+        
+        # Calculate energy level changes
+        energy_changes = [
+            session["energy_level_after"] - session["energy_level_before"]
+            for session in break_sessions
+            if "energy_level_after" in session
+        ]
+        avg_energy_change = sum(energy_changes) / len(energy_changes) if energy_changes else 0
+        
+        return {
+            "total_study_time_minutes": total_study_time,
+            "total_break_time_minutes": total_break_time,
+            "study_sessions_count": len(study_sessions),
+            "break_sessions_count": len(break_sessions),
+            "average_energy_change": avg_energy_change,
+            "most_common_break_activities": get_most_common_activities(break_sessions)
+        }
+    except Exception as e:
+        logger.error(f"Error getting user stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user stats: {str(e)}")
+
+def get_most_common_activities(break_sessions):
+    activities = [session["activity"] for session in break_sessions]
+    activity_counts = {}
+    for activity in activities:
+        activity_counts[activity] = activity_counts.get(activity, 0) + 1
+    return sorted(activity_counts.items(), key=lambda x: x[1], reverse=True)[:5]
 
 # Run the application if this file is executed directly
 if __name__ == "__main__":

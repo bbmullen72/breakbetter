@@ -14,10 +14,22 @@ python-dotenv==1.0.0
 pydantic==2.4.2
 
 # Motor - Asynchronous Python driver for MongoDB
-motor==3.1.1
+motor==3.3.1
 
 # PyMongo - Python driver for MongoDB
 pymongo==4.3.3
 
 # HTTPX - Required by OpenAI client
 httpx==0.25.0
+
+# python-jose[cryptography] - Python library for JOSE web tokens
+python-jose[cryptography]==3.3.0
+
+# passlib[bcrypt] - Password hashing library for Python
+passlib[bcrypt]==1.7.4
+
+# python-multipart - Multipart message support for FastAPI
+python-multipart==0.0.6
+
+# email-validator - Python package for email validation
+email-validator==2.0.0.post2
